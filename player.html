@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- This is the whole point of this file. A Tizen widget runs from file://,
+     which sends no referrer and no usable origin, and since late 2025 YouTube
+     rejects those embeds with error 153. Served over https, this page has a
+     real origin and a real referrer, so the embed is accepted. The TV app
+     frames this page and drives it over postMessage. -->
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Player</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%;
+               background: #000; overflow: hidden; }
+  #player, iframe { position: absolute; top: 0; left: 0;
+                    width: 100%; height: 100%; border: 0; }
+</style>
+</head>
+<body>
+<div id="player"></div>
+
+<script>
+(function () {
+"use strict";
+
+var player = null, ready = false, queued = null, timer = null;
+
+/* ---- talk back to the TV app -------------------------------------------
+   The app's document is file://, whose origin serializes to "null", so it
+   cannot be named as a targetOrigin. '*' is safe here: nothing secret is
+   ever sent, only playback state. */
+function post(msg) {
+  try { if (window.parent && window.parent !== window) window.parent.postMessage(msg, '*'); }
+  catch (e) {}
+}
+
+function qs(name) {
+  var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+/* ---- youtube iframe api ------------------------------------------------ */
+
+window.onYouTubeIframeAPIReady = function () {
+  player = new YT.Player('player', {
+    width: '100%',
+    height: '100%',
+    videoId: qs('v') || undefined,
+    playerVars: {
+      controls: 0, disablekb: 1, modestbranding: 1, rel: 0,
+      fs: 0, playsinline: 1, iv_load_policy: 3, autoplay: 0,
+      origin: location.protocol + '//' + location.host
+    },
+    events: {
+      onReady: function () {
+        ready = true;
+        post({ app: 'nfltv', type: 'ready' });
+        if (queued) { var q = queued; queued = null; load(q); }
+      },
+      onStateChange: function (e) {
+        post({ app: 'nfltv', type: 'state', state: e.data });
+        if (e.data === YT.PlayerState.PLAYING) startTimer(); else stopTimer();
+        if (e.data === YT.PlayerState.ENDED) post({ app: 'nfltv', type: 'ended' });
+      },
+      onError: function (e) {
+        post({ app: 'nfltv', type: 'error', code: e.data });
+      }
+    }
+  });
+};
+
+function startTimer() {
+  stopTimer();
+  timer = setInterval(function () {
+    if (!player || !player.getCurrentTime) return;
+    try {
+      post({ app: 'nfltv', type: 'time',
+             cur: player.getCurrentTime() || 0,
+             dur: player.getDuration() || 0 });
+    } catch (e) {}
+  }, 500);
+}
+function stopTimer() { if (timer) { clearInterval(timer); timer = null; } }
+
+function load(id) {
+  if (!ready || !player) { queued = id; return; }
+  try { player.loadVideoById(id); } catch (e) { post({ app: 'nfltv', type: 'error', code: -1 }); }
+}
+
+/* ---- commands from the TV app ------------------------------------------ */
+
+window.addEventListener('message', function (ev) {
+  var d = ev.data;
+  if (!d || d.app !== 'nfltv' || !d.cmd) return;   // ignore unrelated chatter
+
+  try {
+    switch (d.cmd) {
+      case 'load':  load(String(d.id || '')); break;
+      case 'play':  if (player && player.playVideo)  player.playVideo();  break;
+      case 'pause': if (player && player.pauseVideo) player.pauseVideo(); break;
+      case 'stop':
+        stopTimer();
+        if (player && player.stopVideo) player.stopVideo();
+        break;
+      case 'seek':
+        if (player && player.seekTo) {
+          var now = player.getCurrentTime() || 0;
+          var dur = player.getDuration() || 0;
+          var to  = now + (Number(d.delta) || 0);
+          if (to < 0) to = 0;
+          if (dur && to > dur - 1) to = Math.max(0, dur - 1);
+          player.seekTo(to, true);
+          post({ app: 'nfltv', type: 'time', cur: to, dur: dur });
+        }
+        break;
+    }
+  } catch (e) {
+    post({ app: 'nfltv', type: 'error', code: -1 });
+  }
+}, false);
+
+/* ---- load the api ------------------------------------------------------ */
+
+var s = document.createElement('script');
+s.src = 'https://www.youtube.com/iframe_api';
+s.onerror = function () { post({ app: 'nfltv', type: 'error', code: -2 }); };
+document.getElementsByTagName('head')[0].appendChild(s);
+
+})();
+</script>
+</body>
+</html>
