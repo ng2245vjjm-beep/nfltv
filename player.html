@@ -47,10 +47,20 @@ function qs(name) {
 /* ---- youtube iframe api ------------------------------------------------ */
 
 window.onYouTubeIframeAPIReady = function () {
+  /* Tells the app that youtube.com's script actually arrived, separating
+     "could not reach youtube.com" from "player never started". */
+  post({ app: 'nfltv', type: 'apiready' });
+
+  /* A videoId is required here. Constructing the player without one leaves it
+     with no embed to build, and onReady never fires - the app then waits
+     forever. The app always passes ?v= with a real id from the catalogue. */
+  var initial = qs('v');
+  if (!initial) { post({ app: 'nfltv', type: 'error', code: -3 }); return; }
+
   player = new YT.Player('player', {
     width: '100%',
     height: '100%',
-    videoId: qs('v') || undefined,
+    videoId: initial,
     playerVars: {
       controls: 0, disablekb: 1, modestbranding: 1, rel: 0,
       fs: 0, playsinline: 1, iv_load_policy: 3, autoplay: 0,
