@@ -25,6 +25,11 @@
 
 var player = null, ready = false, queued = null, timer = null;
 
+/* Announced the moment this script runs, before YouTube is involved at all.
+   Lets the TV app tell "the page never loaded" apart from "the page loaded
+   but the YouTube player never started" instead of hanging silently. */
+setTimeout(function () { post({ app: 'nfltv', type: 'boot' }); }, 0);
+
 /* ---- talk back to the TV app -------------------------------------------
    The app's document is file://, whose origin serializes to "null", so it
    cannot be named as a targetOrigin. '*' is safe here: nothing secret is
